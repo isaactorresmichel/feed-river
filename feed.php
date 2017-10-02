@@ -1,18 +1,17 @@
 <?php
-
+	/**
+	 * @param $feed_url
+	 * @return \SimpleXMLElement|false
+	 */
 	function load_xml($feed_url) {
 
 		// Add http before loading the URL
 		$feed_url = add_http($feed_url);
 
 		// Checks if given URL is a valid RSS/Atom feed. If not, exit with error.
-		$xml = simplexml_load_file($feed_url) or die(
-			"<div class=\"alert alert-danger\" role=\"alert\"\">
-				<span class=\"glyphicon glyphicon-exclamation-sign\" aria-hidden=\"true\"></span>
-				&nbsp;Invalid feed URL. Please enter a valid RSS/Atom URL.	
-			</div>");		
+		$xml = @simplexml_load_file($feed_url);
+
 		return $xml;
-	
 	}
 
 	function add_http($feed_url) {
@@ -26,7 +25,7 @@
 	}
 
 	function load_atom_feed($xml) {
-		
+
 		$feed = array();
 
 
@@ -36,7 +35,7 @@
 		}
 
 		return $feed;
-	
+
 	}
 
 	function load_rss_feed($xml) {
@@ -46,24 +45,22 @@
 			array_push($feed, $item);
 		}
 
-		return $feed;	
+		return $feed;
 
 	}
 
 	function format_date($date) {
-		
+
 		// Convert the date to a simpler format
 		return date('d F, Y G:i e', strtotime($date));
 	}
 
 	function load_feed($xml) {
 
-		$feed = array();
-
 		// Check if the feed is RSS or Atom and create feed from XML object
 		if($xml->channel) {
 			$feed = load_rss_feed($xml);
-			
+
 			// Sort the posts with order latest post first
 			usort($feed, function($post1, $post2) {
 				return strtotime($post2->pubDate) - strtotime($post1->pubDate);
@@ -75,11 +72,11 @@
 			// Sort the posts with order latest post first
 			usort($feed, function($post1, $post2) {
 				return strtotime($post2->updated) - strtotime($post1->updated);
-			});	
+			});
 		}
 
 		return $feed;
-	} 
+	}
 
 	function display_posts($feed, $is_rss) {
 
@@ -101,6 +98,120 @@
 		}
 	}
 
+	/**
+	 * Returns an array of SimpleXMLElement items.
+	 * @param SimpleXMLElement $xml
+	 * @return SimpleXMLElement[]|bool
+	 */
+	function get_posts($xml) {
+		if (!$xml || !$feed = load_feed($xml)) {
+			return false;
+		}
+
+		return $feed;
+	}
+
+	/**
+	 * Returns feed XML Wrapper.
+	 * @return false|\SimpleXMLElement
+	 */
+	function get_feed_xml() {
+		// First get submitted url
+		if (!$url = isset($_GET['siteurl']) ?
+		  filter_var($_GET['siteurl'], FILTER_VALIDATE_URL) : false
+		) {
+			return false;
+		}
+
+		/** @var string[] $feeds */
+		$feeds = find_feed_url($url);
+
+		$xml = false;
+		foreach ($feeds as $feed) {
+			if ($xml = load_xml($feed)) {
+				break;
+			}
+		}
+
+		return $xml;
+	}
+
+	/**
+	 * Finds RSS and atomb feeds from document <link> items.
+	 * @param $url
+	 * @return array|bool
+	 */
+	function find_feed_url($url) {
+		// Get site contents.
+		if (!$content = get_site_content($url)) {
+			return false;
+		}
+
+		// Find feed tags.
+		$document = new DOMDocument();
+		if (!@$document->loadHTML($content)) {
+			return false;
+		}
+
+		$xpath = new DOMXPath($document);
+		/** @var DOMNodeList $nodes */
+		$nodes = $xpath->query(
+		  'head/link[@rel="alternate"][@type="application/atom+xml" or @type="application/rss+xml"][@href]'
+		);
+
+		$feeds = array();
+
+		/** @var DOMElement $node */
+		foreach ($nodes as $node) {
+			$feeds[] = $node->getAttribute('href');
+		}
+
+		return $feeds;
+	}
+
+	/**
+	 * Returns document content for an URL.
+	 * @param $url
+	 * @return false|string
+	 * @throws \Exception
+	 */
+	function get_site_content($url) {
+		// If curl is available then use it. It's more consistent.
+		if (function_exists('curl_version')) {
+			// Initializes channel
+			$channel = curl_init();
+
+			$cookies = tempnam(sys_get_temp_dir(), 'feedriver');
+			$options = array(
+			  CURLOPT_URL => $url,
+			  CURLOPT_RETURNTRANSFER => true,
+			  CURLOPT_HEADER => false,
+			  CURLOPT_FOLLOWLOCATION => true,
+			  CURLOPT_USERAGENT => "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36",
+			  CURLOPT_AUTOREFERER => true,
+			  CURLOPT_CONNECTTIMEOUT => 120,
+			  CURLOPT_TIMEOUT => 120,
+			  CURLOPT_MAXREDIRS => 10,
+			  CURLOPT_SSL_VERIFYPEER => false,
+			  CURLOPT_COOKIEJAR => $cookies,
+			  CURLOPT_COOKIEFILE => $cookies,
+			);
+			curl_setopt_array($channel, $options);
+			$data = curl_exec($channel);
+
+			if ($error = curl_error($channel)) {
+				throw new Exception($error);
+			}
+
+			// Closes channel
+			curl_close($channel);
+
+			return $data;
+		}
+
+		// Then use file_get_contents.
+		return @file_get_contents($url);
+	}
 ?>
 
 <!DOCTYPE html>
@@ -109,7 +220,7 @@
 	<title>Feed-River - A minimalistic RSS/Atom Feed Reader</title>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	
+
 	<!-- Latest compiled and minified CSS -->
 	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
 	<!-- jQuery library -->
@@ -131,22 +242,18 @@
 
 	<div class="col-xs-12 col-md-12 col-xs-12"">
 		<div class="container-fluid">
-			<?php 
-
-				$url = $_GET['siteurl'];
-				$xml = load_xml($url);
-
-				$posts = load_feed($xml);
-			?>
-			<div class="post">
-				<?php
-
-					// Display posts
-					($xml->channel) ? display_posts($posts, true) : display_posts($posts, false);
-
-				
-				?>
-			</div>
+			<?php $xml = get_feed_xml(); ?>
+			<?php if ($xml && $posts = get_posts($xml)): ?>
+				<div class="post">
+					<?php display_posts($posts, isset($xml->channel)); ?>
+				</div>
+			<?php else: ?>
+				<div class="alert alert-danger">
+					<span class="glyphicon glyphicon-exclamation-sign"
+						  aria-hidden="true"></span>
+					&nbsp;Invalid feed URL. Please enter a valid RSS/Atom URL.
+				</div>
+			<?php endif ?>
 		</div>
 
 		<footer class="text-primary footer-feed">
